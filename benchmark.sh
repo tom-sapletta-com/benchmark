@@ -91,11 +91,19 @@ echo -e "\n=== Benchmark GPU (glmark2, skrócony test) ==="
 echo "Uruchamiam glmark2 z limitowanym czasem 4 minuty i wybranymi testami..."
 glmark2_output=$(timeout 240 glmark2 --size 400x300 -s build,texture,shading,bump 2>&1 | tee glmark2.log)
 
-# próbujemy wydobyć wynik z różnych formatów wyjścia
-glmark2_score=$(echo "$glmark2_output" | grep -E "Score:" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+# Wyszukiwanie wyniku w kilku wariantach
+glmark2_score=$(echo "$glmark2_output" | grep -i "glmark2 score" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
 
 if [ -z "$glmark2_score" ]; then
-  glmark2_score=$(grep -E "Score:" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+  glmark2_score=$(echo "$glmark2_output" | grep -i "score" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+fi
+
+if [ -z "$glmark2_score" ]; then
+  glmark2_score=$(grep -i "glmark2 score" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+fi
+
+if [ -z "$glmark2_score" ]; then
+  glmark2_score=$(grep -i "score" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
 fi
 
 if [ -n "$glmark2_score" ]; then
@@ -104,6 +112,7 @@ else
   echo "Nie udało się wyciągnąć wyniku GPU z glmark2, zapisuję N/A"
   save_result "GPU_glmark2_score" "N/A" "-"
 fi
+
 
 echo -e "\nUsuwam plik testowy..."
 rm -f ./testfile
