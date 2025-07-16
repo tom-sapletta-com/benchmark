@@ -6,6 +6,12 @@
 # Exit on error, but ensure cleanup happens
 set -e
 
+# Load configuration from .env file if it exists
+if [ -f ".env" ]; then
+  echo "Loading configuration from .env file"
+  source .env
+fi
+
 # Configuration - can be overridden with environment variables
 : ${CPU_MAX_PRIME:=20000}
 : ${CPU_THREADS:=4}
@@ -21,6 +27,8 @@ TEMP_FILES=()
 # Cleanup function that runs on exit
 cleanup() {
   echo -e "\nCleaning up temporary files..."
+  rm -f ./testfile
+  rm -f /tmp/pip_error.log
   for file in "${TEMP_FILES[@]}"; do
     [ -f "$file" ] && rm -f "$file" && echo "Removed: $file"
   done
@@ -104,27 +112,125 @@ install_packages() {
 
 # Check for required tools and install if missing
 echo "Sprawdzam wymagane narzędzia..."
-REQUIRED_PACKAGES="sysbench glmark2"
+REQUIRED_PACKAGES="sysbench glmark2 python3 python3-pip"
 MISSING_PACKAGES=()
 
-for pkg in sysbench glmark2; do
-  if ! command -v $pkg &>/dev/null; then
-    MISSING_PACKAGES+=($pkg)
+# Check for sysbench
+if ! command -v sysbench &>/dev/null; then
+  MISSING_PACKAGES+=("sysbench")
+fi
+
+# Check for glmark2 - this might not be in PATH but could still be installed
+if ! command -v glmark2 &>/dev/null; then
+  # Try to find it in common locations
+  if [ ! -f "/usr/bin/glmark2" ] && [ ! -f "/usr/local/bin/glmark2" ]; then
+    MISSING_PACKAGES+=("glmark2")
   fi
-done
+fi
+
+# Check for python3
+if ! command -v python3 &>/dev/null; then
+  MISSING_PACKAGES+=("python3")
+fi
+
+# Check for pip - might be pip or pip3
+if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
+  MISSING_PACKAGES+=("python3-pip")
+fi
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
   echo "Brakujące narzędzia: ${MISSING_PACKAGES[*]}"
-  if ! install_packages "$REQUIRED_PACKAGES"; then
+  if ! install_packages "${MISSING_PACKAGES[*]}"; then
     echo "BŁĄD: Nie można kontynuować bez wymaganych narzędzi."
     exit 1
   fi
 fi
 
-# Verify tools are available after installation attempt
-if ! command -v sysbench &>/dev/null || ! command -v glmark2 &>/dev/null; then
-  echo "BŁĄD: Nadal brak wymaganych narzędzi sysbench lub glmark2 po próbie instalacji. Przerywam test."
+# Verify essential tools are available after installation attempt
+if ! command -v sysbench &>/dev/null; then
+  echo "BŁĄD: Brak narzędzia sysbench po próbie instalacji. Przerywam test."
   exit 1
+fi
+
+# For glmark2, check common locations as it might not be in PATH
+GLMARK2_FOUND=false
+if command -v glmark2 &>/dev/null || [ -f "/usr/bin/glmark2" ] || [ -f "/usr/local/bin/glmark2" ]; then
+  GLMARK2_FOUND=true
+fi
+
+if [ "$GLMARK2_FOUND" = false ]; then
+  echo "UWAGA: Nie znaleziono narzędzia glmark2. Test GPU będzie pominięty."
+fi
+
+# Check for Python - required for AI benchmark
+if ! command -v python3 &>/dev/null; then
+  echo "UWAGA: Python3 nie jest dostępny. Test AI będzie pominięty."
+fi
+
+# Install required Python packages for AI benchmark
+PYTHON_READY=false
+VENV_DIR="./.venv"
+
+# Function to check if Python packages are available
+check_python_packages() {
+  if command -v python3 &>/dev/null; then
+    if python3 -c "import numpy, sklearn" 2>/dev/null; then
+      PYTHON_READY=true
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# First check if packages are already installed system-wide
+if check_python_packages; then
+  echo "Pakiety Python są już zainstalowane."
+else
+  # Check if we have a virtual environment with the packages
+  if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python" ]; then
+    echo "Znaleziono wirtualne środowisko Python, sprawdzam pakiety..."
+    source "$VENV_DIR/bin/activate"
+    if python -c "import numpy, sklearn" 2>/dev/null; then
+      echo "Pakiety Python są zainstalowane w wirtualnym środowisku."
+      PYTHON_READY=true
+    else
+      echo "Wirtualne środowisko istnieje, ale brakuje pakietów. Instaluję..."
+      pip install numpy scikit-learn && PYTHON_READY=true
+    fi
+    deactivate
+  elif command -v python3 &>/dev/null; then
+    # Try to install packages if Python is available
+    echo "Próbuję zainstalować wymagane pakiety Python: numpy scikit-learn"
+    
+    # Try user installation first
+    if pip3 install --user numpy scikit-learn 2>/tmp/pip_error.log; then
+      echo "Pakiety Python zainstalowane pomyślnie."
+      PYTHON_READY=true
+    else
+      # Check if it's an externally-managed-environment error
+      if grep -q "externally-managed-environment" /tmp/pip_error.log; then
+        echo "Wykryto środowisko zarządzane zewnętrznie. Tworzę wirtualne środowisko Python..."
+        
+        # Create and use virtual environment
+        python3 -m venv "$VENV_DIR"
+        if [ -f "$VENV_DIR/bin/python" ]; then
+          source "$VENV_DIR/bin/activate"
+          pip install numpy scikit-learn
+          echo "Pakiety zainstalowane w wirtualnym środowisku."
+          PYTHON_READY=true
+          deactivate
+        else
+          echo "UWAGA: Nie udało się utworzyć wirtualnego środowiska Python."
+        fi
+      else
+        echo "UWAGA: Nie można zainstalować pakietów Python. Test AI będzie pominięty."
+        cat /tmp/pip_error.log
+      fi
+      rm -f /tmp/pip_error.log
+    fi
+  else
+    echo "UWAGA: Python3 nie jest dostępny. Test AI będzie pominięty."
+  fi
 fi
 
 # Prepare results file
@@ -266,7 +372,84 @@ else
   fi
 fi
 
+# Run AI benchmark
+print_header "AI Performance Benchmark"
+echo "Uruchamiam benchmark wydajności AI (NumPy, scikit-learn)..."
+
+AI_SCORE="N/A"
+AI_NUMPY_SCORE="N/A"
+AI_ML_SCORE="N/A"
+
+# Function to run AI benchmark
+run_ai_benchmark() {
+  local python_cmd=$1
+  echo "Uruchamiam test AI..."
+  local output=$($python_cmd ./ai_benchmark.py 2>&1)
+  local status=$?
+  
+  echo "$output"
+  
+  if [ $status -eq 0 ]; then
+    # Extract scores from the output
+    local result_line=$(echo "$output" | tail -n1)
+    
+    # Parse the CSV result line
+    IFS=',' read -r AI_SCORE AI_NUMPY_SCORE AI_ML_SCORE AI_MATRIX_MULT_TIME AI_MATRIX_INV_TIME AI_SVD_TIME AI_TRAIN_TIME AI_PREDICT_TIME <<< "$result_line"
+    
+    echo "Wynik AI: $AI_SCORE punktów"
+    echo "Wynik NumPy: $AI_NUMPY_SCORE punktów"
+    echo "Wynik ML: $AI_ML_SCORE punktów"
+    
+    # Save results to CSV
+    save_result "AI_total_score" "$AI_SCORE" "pkt"
+    save_result "AI_numpy_score" "$AI_NUMPY_SCORE" "pkt"
+    save_result "AI_ml_score" "$AI_ML_SCORE" "pkt"
+    return 0
+  else
+    echo "BŁĄD: Test AI zakończył się niepowodzeniem."
+    save_result "AI_total_score" "N/A" "pkt"
+    return 1
+  fi
+}
+
+# First try system Python if packages are available
+if [ "$PYTHON_READY" = true ] && command -v python3 &>/dev/null; then
+  if python3 -c "import numpy, sklearn" 2>/dev/null; then
+    run_ai_benchmark "python3"
+  else
+    # Try virtual environment if available
+    if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python" ]; then
+      echo "Używam wirtualnego środowiska Python..."
+      source "$VENV_DIR/bin/activate"
+      
+      if python -c "import numpy, sklearn" 2>/dev/null; then
+        run_ai_benchmark "python"
+      else
+        echo "UWAGA: Brak wymaganych pakietów Python w wirtualnym środowisku. Test AI pominięty."
+        save_result "AI_total_score" "N/A" "pkt"
+      fi
+      
+      # Deactivate virtual environment
+      deactivate 2>/dev/null || true
+    else
+      echo "UWAGA: Brak wymaganych pakietów Python. Test AI pominięty."
+      save_result "AI_total_score" "N/A" "pkt"
+    fi
+  fi
+else
+  echo "UWAGA: Python3 nie jest dostępny lub brak wymaganych pakietów. Test AI pominięty."
+  save_result "AI_total_score" "N/A" "pkt"
+fi
+
 echo -e "\nUsuwam plik testowy..."
 rm -f ./testfile
+
+# Display summary
+print_header "Benchmark Summary"
+echo "CPU (czas wykonania): $CPU_TOTAL_TIME s (mniej = lepiej)"
+echo "RAM (szybkość transferu): $RAM_TRANSFER_RATE MiB/s (więcej = lepiej)"
+echo "Dysk (szybkość zapisu): $DISK_WRITE_SPEED MB/s (więcej = lepiej)"
+echo "GPU (glmark2): $GPU_SCORE punkty (więcej = lepiej)"
+echo "AI (wydajność): $AI_SCORE punkty (więcej = lepiej)"
 
 echo -e "\nBenchmark zakończony. Wyniki zapisano w pliku $RESULTS_FILE"

@@ -1,0 +1,31 @@
+version: '3'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: benchmark-web
+    ports:
+      - "${DOCKER_PORT:-80}:80"
+    volumes:
+      - ./:/var/www/html
+      - ./uploads:/var/www/html/uploads
+    environment:
+      - DOCKER_DOMAIN=${DOCKER_DOMAIN:-benchmark.local}
+      - CPU_MAX_PRIME=${CPU_MAX_PRIME:-20000}
+      - CPU_THREADS=${CPU_THREADS:-4}
+      - DISK_TEST_SIZE=${DISK_TEST_SIZE:-1G}
+      - GPU_TEST_TIMEOUT=${GPU_TEST_TIMEOUT:-240}
+      - GPU_TEST_SIZE=${GPU_TEST_SIZE:-400x300}
+      - SERVER_URL=${SERVER_URL:-https://benchmark.sapletta.com}
+      - UPLOAD_DIR=${UPLOAD_DIR:-uploads}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-1048576}
+    networks:
+      benchmark_net:
+        aliases:
+          - ${DOCKER_DOMAIN:-benchmark.local}
+
+networks:
+  benchmark_net:
+    driver: bridge

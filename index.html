@@ -2,24 +2,292 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Porównanie benchmarków - wykres radarowy</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; margin: 1em; max-width: 1000px; }
+    body { font-family: Arial, sans-serif; margin: 1em auto; max-width: 1000px; padding: 0 15px; }
     canvas { max-width: 600px; margin: 20px auto; display: block; }
-    h1 { text-align: center; }
+    h1, h2 { text-align: center; }
     #file-input { margin: 1em 0; }
+    .controls { display: flex; justify-content: space-between; margin: 20px 0; flex-wrap: wrap; }
+    .btn { padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .btn:hover { background: #45a049; }
+    .btn-danger { background: #f44336; }
+    .btn-danger:hover { background: #d32f2f; }
+    .saved-results { margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    tr:hover { background-color: #f5f5f5; }
+    .device-info { background: #f9f9f9; padding: 15px; border-radius: 5px; margin: 15px 0; }
+    .tabs { display: flex; margin: 20px 0; }
+    .tab { padding: 10px 20px; cursor: pointer; background: #eee; }
+    .tab.active { background: #4CAF50; color: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
   </style>
 </head>
 <body>
   <h1>Porównanie benchmarków - wykres radarowy</h1>
-  <p>Wczytaj pliki CSV wygenerowane przez benchmark, by zobaczyć porównanie na wykresie radarowym.</p>
-
-  <input type="file" id="file-input" accept=".csv" multiple />
-
-  <canvas id="radarChart" aria-label="Wykres radarowy benchmarków" role="img"></canvas>
+  
+  <div class="tabs">
+    <div class="tab active" data-tab="upload">Wczytaj pliki</div>
+    <div class="tab" data-tab="saved">Zapisane wyniki</div>
+    <div class="tab" data-tab="compare">Porównanie</div>
+  </div>
+  
+  <div id="upload-tab" class="tab-content active">
+    <p>Wczytaj pliki CSV wygenerowane przez benchmark, by zobaczyć porównanie na wykresie radarowym.</p>
+    <input type="file" id="file-input" accept=".csv" multiple />
+    
+    <div class="controls">
+      <button id="save-results" class="btn">Zapisz wyniki lokalnie</button>
+      <button id="clear-chart" class="btn btn-danger">Wyczyść wykres</button>
+    </div>
+    
+    <canvas id="radarChart" aria-label="Wykres radarowy benchmarków" role="img"></canvas>
+  </div>
+  
+  <div id="saved-tab" class="tab-content">
+    <h2>Zapisane wyniki</h2>
+    <div class="controls">
+      <button id="clear-storage" class="btn btn-danger">Usuń wszystkie zapisane wyniki</button>
+    </div>
+    <div id="saved-results-list" class="saved-results">
+      <p>Brak zapisanych wyników.</p>
+    </div>
+  </div>
+  
+  <div id="compare-tab" class="tab-content">
+    <h2>Porównanie wyników</h2>
+    <div id="comparison-table">
+      <p>Wybierz wyniki do porównania w zakładce "Zapisane wyniki".</p>
+    </div>
+    
+    <div id="device-info" class="device-info">
+      <h3>Informacje o urządzeniach</h3>
+      <div id="device-details"></div>
+    </div>
+  </div>
 
   <script>
+    // Inicjalizacja zmiennych dla przechowywania danych
+    let allData = [];
+    let selectedResults = [];
+    let radarChart = null;
+    
+    // Obsługa zakładek
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab + '-tab').classList.add('active');
+        
+        // Jeśli przechodzimy do zakładki porównania, aktualizujemy tabelę
+        if (tab.dataset.tab === 'compare' && selectedResults.length > 0) {
+          updateComparisonTable();
+        }
+      });
+    });
+    
+    // Inicjalizacja local storage
+    function initStorage() {
+      if (!localStorage.getItem('benchmarkResults')) {
+        localStorage.setItem('benchmarkResults', JSON.stringify([]));
+      }
+      loadSavedResults();
+    }
+    
+    // Ładowanie zapisanych wyników
+    function loadSavedResults() {
+      const savedResults = JSON.parse(localStorage.getItem('benchmarkResults') || '[]');
+      const resultsList = document.getElementById('saved-results-list');
+      
+      if (savedResults.length === 0) {
+        resultsList.innerHTML = '<p>Brak zapisanych wyników.</p>';
+        return;
+      }
+      
+      let html = '<table><tr><th>Nazwa</th><th>Data</th><th>Urządzenie</th><th>Akcje</th></tr>';
+      
+      savedResults.forEach((result, index) => {
+        const deviceInfo = result.data.find(r => r.test === 'CPU_total_time');
+        const deviceName = deviceInfo ? deviceInfo.cpu_model.substring(0, 30) + '...' : 'Nieznane urządzenie';
+        const date = deviceInfo ? deviceInfo.data : 'Brak daty';
+        
+        html += `<tr>
+          <td>${result.filename}</td>
+          <td>${date}</td>
+          <td>${deviceName}</td>
+          <td>
+            <button class="btn" onclick="viewResult(${index})">Pokaż</button>
+            <button class="btn" onclick="toggleResultSelection(${index})">Wybierz do porównania</button>
+            <button class="btn btn-danger" onclick="deleteResult(${index})">Usuń</button>
+          </td>
+        </tr>`;
+      });
+      
+      html += '</table>';
+      resultsList.innerHTML = html;
+    }
+    
+    // Zapisywanie wyników do local storage
+    function saveResults() {
+      if (allData.length === 0) {
+        alert('Brak wyników do zapisania. Wczytaj najpierw pliki CSV.');
+        return;
+      }
+      
+      const savedResults = JSON.parse(localStorage.getItem('benchmarkResults') || '[]');
+      
+      allData.forEach(data => {
+        // Sprawdź czy już istnieje
+        const exists = savedResults.some(r => r.filename === data.filename);
+        if (!exists) {
+          savedResults.push(data);
+        }
+      });
+      
+      localStorage.setItem('benchmarkResults', JSON.stringify(savedResults));
+      alert('Wyniki zostały zapisane lokalnie.');
+      loadSavedResults();
+    }
+    
+    // Usuwanie wszystkich zapisanych wyników
+    function clearStorage() {
+      if (confirm('Czy na pewno chcesz usunąć wszystkie zapisane wyniki?')) {
+        localStorage.setItem('benchmarkResults', JSON.stringify([]));
+        selectedResults = [];
+        loadSavedResults();
+        alert('Wszystkie zapisane wyniki zostały usunięte.');
+      }
+    }
+    
+    // Usuwanie pojedynczego wyniku
+    function deleteResult(index) {
+      const savedResults = JSON.parse(localStorage.getItem('benchmarkResults') || '[]');
+      savedResults.splice(index, 1);
+      localStorage.setItem('benchmarkResults', JSON.stringify(savedResults));
+      
+      // Aktualizacja wybranych wyników
+      selectedResults = selectedResults.filter(i => i !== index);
+      
+      loadSavedResults();
+    }
+    
+    // Wyświetlanie pojedynczego wyniku
+    function viewResult(index) {
+      const savedResults = JSON.parse(localStorage.getItem('benchmarkResults') || '[]');
+      if (index >= 0 && index < savedResults.length) {
+        allData = [savedResults[index]];
+        drawRadarChart(allData);
+        
+        // Przełącz na zakładkę wykresu
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelector('.tab[data-tab="upload"]').classList.add('active');
+        document.getElementById('upload-tab').classList.add('active');
+      }
+    }
+    
+    // Wybieranie wyniku do porównania
+    function toggleResultSelection(index) {
+      const resultIndex = selectedResults.indexOf(index);
+      if (resultIndex === -1) {
+        selectedResults.push(index);
+      } else {
+        selectedResults.splice(resultIndex, 1);
+      }
+      
+      updateComparisonTable();
+    }
+    
+    // Aktualizacja tabeli porównawczej
+    function updateComparisonTable() {
+      if (selectedResults.length === 0) {
+        document.getElementById('comparison-table').innerHTML = '<p>Wybierz wyniki do porównania w zakładce "Zapisane wyniki".</p>';
+        document.getElementById('device-details').innerHTML = '';
+        return;
+      }
+      
+      const savedResults = JSON.parse(localStorage.getItem('benchmarkResults') || '[]');
+      const selectedData = selectedResults.map(index => savedResults[index]);
+      
+      // Rysowanie wykresu porównawczego
+      drawRadarChart(selectedData);
+      
+      // Tworzenie tabeli porównawczej
+      let tableHtml = '<table><tr><th>Test</th>';
+      selectedData.forEach(data => {
+        tableHtml += `<th>${data.filename}</th>`;
+      });
+      tableHtml += '</tr>';
+      
+      // Lista testów do porównania
+      const testsToInclude = [
+        'CPU_total_time',
+        'RAM_transfer_rate',
+        'Disk_write_speed',
+        'GPU_glmark2_score'
+      ];
+      
+      testsToInclude.forEach(test => {
+        tableHtml += `<tr><td>${test.replace(/_/g, ' ')}</td>`;
+        
+        selectedData.forEach(data => {
+          const result = data.data.find(r => r.test === test);
+          if (result) {
+            tableHtml += `<td>${result.wartosc} ${result.jednostka}</td>`;
+          } else {
+            tableHtml += '<td>N/A</td>';
+          }
+        });
+        
+        tableHtml += '</tr>';
+      });
+      
+      tableHtml += '</table>';
+      document.getElementById('comparison-table').innerHTML = tableHtml;
+      
+      // Wyświetlanie informacji o urządzeniach
+      let deviceHtml = '';
+      selectedData.forEach(data => {
+        const deviceInfo = data.data.find(r => r.test === 'CPU_total_time');
+        if (deviceInfo) {
+          deviceHtml += `<div class="device-card">
+            <h4>${data.filename}</h4>
+            <p><strong>System:</strong> ${deviceInfo.system}</p>
+            <p><strong>CPU:</strong> ${deviceInfo.cpu_model}</p>
+            <p><strong>GPU:</strong> ${deviceInfo.gpu}</p>
+            <p><strong>RAM:</strong> ${deviceInfo.ram_total}</p>
+            <p><strong>Dyski:</strong> ${deviceInfo.disks}</p>
+            <p><strong>Data testu:</strong> ${deviceInfo.data}</p>
+          </div>`;
+        }
+      });
+      
+      document.getElementById('device-details').innerHTML = deviceHtml;
+    }
+    
+    // Czyszczenie wykresu
+    function clearChart() {
+      if (radarChart) {
+        radarChart.destroy();
+        radarChart = null;
+      }
+      allData = [];
+    }
+    
+    // Inicjalizacja przycisków
+    document.getElementById('save-results').addEventListener('click', saveResults);
+    document.getElementById('clear-chart').addEventListener('click', clearChart);
+    document.getElementById('clear-storage').addEventListener('click', clearStorage);
+    
+    // Inicjalizacja przy ładowaniu strony
+    window.addEventListener('DOMContentLoaded', initStorage);
+    
     // Prosty parser CSV, obsługa nagłówków i wartości w cudzysłowach
     function parseCSV(text) {
       const lines = text.trim().split(/\r?\n/);
@@ -76,8 +344,7 @@
         return;
       }
 
-      const allData = [];
-
+      allData = [];
       let filesProcessed = 0;
 
       for(let f=0; f<files.length; f++){
@@ -101,6 +368,10 @@
 
     // Funkcja tworząca wykres radarowy
     function drawRadarChart(fileDataArray){
+      // Jeśli brak danych, nie rysuj wykresu
+      if (!fileDataArray || fileDataArray.length === 0) {
+        return;
+      }
 
       // Wybierz testy do porównania - możesz zmienić listę, np. tylko główne testy CPU/RAM/Storage/GPU
       const testsToInclude = [
@@ -118,10 +389,16 @@
         const d = testsToInclude.map(testName => {
           const rec = fileObj.data.find(r => r.test === testName);
           if(!rec) return NaN;
-          // dla czasu CPU i dysku im mniejszy wynik lepszy (np. czas w sekundach)
-          // dla transferu RAM i GPU glmark2 im wyższy lepszy
-          // dlatego można odpowiednio odwrócić/normalizować, ale na początek bierzemy surowe wartości jako liczby
-          return parseNumber(rec.wartosc);
+          
+          // Normalizacja wartości dla lepszej wizualizacji
+          // Dla czasu CPU - im mniejszy tym lepszy, więc odwracamy
+          if (testName === 'CPU_total_time') {
+            const value = parseNumber(rec.wartosc);
+            // Odwracamy wartość czasu - im krótszy czas, tym wyższa wartość na wykresie
+            return value > 0 ? 10 / value : NaN;
+          } else {
+            return parseNumber(rec.wartosc);
+          }
         });
 
         return {
@@ -137,15 +414,17 @@
         };
       });
 
-      // Przedstawienie na wykresie wymaga normalizacji - tutaj dla prostoty pomińmy (można dodać później)
-
       // Dodaj etykiety testów, zastępując podkreślenia spacjami
       const radarLabels = testsToInclude.map(t => t.replace(/_/g,' '));
 
       if(radarChart){
         radarChart.destroy();
       }
+      
+      // Określ element canvas dla wykresu
+      const ctx = document.getElementById('radarChart').getContext('2d');
 
+      // Tworzenie wykresu radarowego
       radarChart = new Chart(ctx, {
         type: 'radar',
         data: {
