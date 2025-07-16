@@ -2,185 +2,186 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8" />
-  <title>Porównanie Benchmarków Linux</title>
+  <title>Porównanie benchmarków - wykres radarowy</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding: 1em; max-width: 900px; margin: auto; }
+    body { font-family: Arial, sans-serif; margin: 1em; max-width: 1000px; }
+    canvas { max-width: 600px; margin: 20px auto; display: block; }
     h1 { text-align: center; }
-    input[type="file"] { margin: 1em 0; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1em; }
-    th, td { border: 1px solid #ccc; padding: 0.5em; text-align: center; }
-    th { background-color: #f4f4f4; }
-    .json-output {
-      white-space: pre-wrap;
-      background: #eee; 
-      padding: 1em; 
-      border: 1px solid #ccc;
-      max-height: 300px;
-      overflow-y: auto;
-      margin-top: 1em;
-    }
-    .comparison {
-      margin-top: 2em;
-    }
+    #file-input { margin: 1em 0; }
   </style>
 </head>
 <body>
-  <h1>Porównanie wyników benchmark CSV → JSON</h1>
-  <p>Załaduj jeden lub więcej plików CSV z wynikami benchmarków. Skrypt wyświetli dane w tabeli oraz jako JSON i spróbuje porównać wspólne testy.</p>
+  <h1>Porównanie benchmarków - wykres radarowy</h1>
+  <p>Wczytaj pliki CSV wygenerowane przez benchmark, by zobaczyć porównanie na wykresie radarowym.</p>
 
   <input type="file" id="file-input" accept=".csv" multiple />
 
-  <div id="outputs"></div>
+  <canvas id="radarChart" aria-label="Wykres radarowy benchmarków" role="img"></canvas>
 
   <script>
-  // Prosty parser CSV
-  function parseCSV(text) {
-    const lines = text.trim().split(/\r?\n/);
-    const headers = lines[0].split(',');
-    const rows = lines.slice(1).map(line => {
-      // uwzględniamy przecinki w cudzysłowach
-      const values = [];
-      let val = '', inQuotes = false;
-      for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if(char === '"' && (i===0 || line[i-1] !== '\\')) inQuotes = !inQuotes;
-        else if(char === ',' && !inQuotes){
-          values.push(val.trim().replace(/^"(.*)"$/, '$1'));
-          val = '';
-        } else {
-          val += char;
+    // Prosty parser CSV, obsługa nagłówków i wartości w cudzysłowach
+    function parseCSV(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const headers = lines[0].split(',');
+      return lines.slice(1).map(line => {
+        const values = [];
+        let val = '', inQuotes = false;
+        for(let i=0; i < line.length; i++) {
+          const char = line[i];
+          if(char === '"' && (i===0 || line[i-1] !== '\\')) {
+            inQuotes = !inQuotes;
+          } else if(char === ',' && !inQuotes) {
+            values.push(val.trim().replace(/^"(.*)"$/, '$1'));
+            val = '';
+          } else {
+            val += char;
+          }
         }
-      }
-      values.push(val.trim().replace(/^"(.*)"$/, '$1'));
-      const row = {};
-      headers.forEach((h,i) => row[h] = values[i] || '');
-      return row;
-    });
-    return rows;
-  }
-
-  // Funkcja konwersji wartości na liczbę, jeśli możliwe
-  function parseNumber(value){
-    if (!value) return NaN;
-    // usuń jednostki i przecinki
-    const num = parseFloat(value.replace(/[^0-9.]/g,''));
-    return isNaN(num) ? NaN : num;
-  }
-
-  // Renders data as table
-  function renderTable(data, container, title){
-    const tests = [...new Set(data.map(r => r.test))];
-    const systems = [...new Set(data.map(r => r.system))];
-
-    // Nagłówki: test + systemy
-    let html = `<h2>${title}</h2><table><thead><tr><th>Test</th>`;
-    systems.forEach(s => html += `<th>${s}</th>`);
-    html += `</tr></thead><tbody>`;
-
-    tests.forEach(test=>{
-      html += `<tr><td>${test}</td>`;
-      systems.forEach(s=>{
-        const record = data.find(r => r.test === test && r.system === s);
-        if(record){
-          html += `<td>${record.wartosc} ${record.jednostka || ''}</td>`;
-        } else {
-          html += `<td>--</td>`;
-        }
+        values.push(val.trim().replace(/^"(.*)"$/, '$1'));
+        const row = {};
+        headers.forEach((h,i) => row[h] = values[i] || '');
+        return row;
       });
-      html += `</tr>`;
-    });
-    html += `</tbody></table>`;
-    container.innerHTML += html;
-  }
-
-  // Render JSON pretty
-  function renderJSON(data, container, title){
-    container.innerHTML += `<h2>${title} (JSON)</h2><pre class="json-output">${JSON.stringify(data,null,2)}</pre>`;
-  }
-
-  // Porównanie - różnice procentowe dla liczbowych wyników
-  function renderComparison(data, container){
-    // Przyjmujemy, że dla każdego testu porównujemy wartości między systemami
-    // Agregujemy narzucone systemy i testy
-    const tests = [...new Set(data.map(r => r.test))];
-    const systems = [...new Set(data.map(r => r.system))];
-    if (systems.length < 2) {
-      container.innerHTML += `<p>Wczytano tylko jeden system - porównanie wymaga minimum dwóch.</p>`;
-      return;
     }
 
-    let html = `<div class="comparison"><h2>Porównanie wyników (procentowa różnica względem pierwszego systemu)</h2><table><thead><tr><th>Test</th>`;
-    systems.forEach(s => html += `<th>${s}</th>`);
-    html += `<th>% różnica względem ${systems[0]}</th></tr></thead><tbody>`;
+    // Konwertuj wartość na liczbę (float), lub NaN jeśli nie da się
+    function parseNumber(value) {
+      if(!value) return NaN;
+      // usuń wszystko poza cyframi i kropką
+      const num = parseFloat(value.replace(/[^0-9.-]+/g,""));
+      return isNaN(num) ? NaN : num;
+    }
 
-    tests.forEach(test=>{
-      // pobierz wartości liczbowej dla testu i systemu
-      const baseRecord = data.find(r => r.test === test && r.system === systems[0]);
-      const baseVal = baseRecord ? parseNumber(baseRecord.wartosc) : NaN;
+    // Kolory zestawów danych dla wykresu
+    const COLORS = [
+      'rgba(255, 99, 132, 0.5)',
+      'rgba(54, 162, 235, 0.5)',
+      'rgba(255, 206, 86, 0.5)',
+      'rgba(75, 192, 192, 0.5)',
+      'rgba(153, 102, 255, 0.5)',
+      'rgba(255, 159, 64, 0.5)'
+    ];
 
-      html += `<tr><td>${test}</td>`;
-      systems.forEach(s=>{
-        const rec = data.find(r => r.test === test && r.system === s);
-        const val = rec ? parseNumber(rec.wartosc) : NaN;
-        const display = rec ? `${rec.wartosc} ${rec.jednostka || ''}` : '--';
-        html += `<td>${display}</td>`;
-      });
+    const BORDER_COLORS = COLORS.map(c => c.replace('0.5', '1'));
 
-      if (isNaN(baseVal)) {
-        html += `<td>Brak danych bazowych</td>`;
-      } else {
-        // Obliczymy różnicę procentową max odchylenia spośród pozostałych systemów
-        let maxDiff = 0;
-        for(let i=1; i<systems.length; i++){
-          const r = data.find(r => r.test === test && r.system === systems[i]);
-          if(!r) continue;
-          const val = parseNumber(r.wartosc);
-          if(isNaN(val)) continue;
-          const diff = ((val - baseVal)/baseVal)*100;
-          if(Math.abs(diff) > Math.abs(maxDiff)) maxDiff = diff;
-        }
-        maxDiff = Math.round(maxDiff*100)/100;
-        html += `<td>${maxDiff > 0 ? "+" : ""}${maxDiff}%</td>`;
+    const fileInput = document.getElementById('file-input');
+    const ctx = document.getElementById('radarChart').getContext('2d');
+    let radarChart = null;
+
+    fileInput.addEventListener('change', () => {
+      const files = fileInput.files;
+      if(files.length === 0) {
+        alert('Proszę wybrać przynajmniej jeden plik CSV.');
+        return;
       }
 
-      html += `</tr>`;
+      const allData = [];
+
+      let filesProcessed = 0;
+
+      for(let f=0; f<files.length; f++){
+        const reader = new FileReader();
+        reader.onload = e => {
+          try {
+            const csvText = e.target.result;
+            const data = parseCSV(csvText);
+            allData.push({filename: files[filesProcessed].name, data});
+          } catch(err){
+            alert(`Błąd podczas parsowania pliku ${files[filesProcessed].name}: ${err.message}`);
+          }
+          filesProcessed++;
+          if(filesProcessed === files.length){
+            drawRadarChart(allData);
+          }
+        };
+        reader.readAsText(files[f]);
+      }
     });
 
-    html += `</tbody></table></div>`;
-    container.innerHTML += html;
-  }
+    // Funkcja tworząca wykres radarowy
+    function drawRadarChart(fileDataArray){
 
-  document.getElementById('file-input').addEventListener('change', (event) => {
-    const files = event.target.files;
-    if(files.length === 0) return;
+      // Wybierz testy do porównania - możesz zmienić listę, np. tylko główne testy CPU/RAM/Storage/GPU
+      const testsToInclude = [
+        'CPU_total_time',
+        'RAM_transfer_rate',
+        'Disk_write_speed',
+        'GPU_glmark2_score'
+      ];
 
-    const outputs = document.getElementById('outputs');
-    outputs.innerHTML = '';
+      // Zbierz nazwy systemów/pliki
+      const labels = fileDataArray.map(f => f.filename);
 
-    const allData = [];
+      // Dla każdego pliku zbierz wartości testów w ustalonej kolejności
+      const datasets = fileDataArray.map( (fileObj, idx) => {
+        const d = testsToInclude.map(testName => {
+          const rec = fileObj.data.find(r => r.test === testName);
+          if(!rec) return NaN;
+          // dla czasu CPU i dysku im mniejszy wynik lepszy (np. czas w sekundach)
+          // dla transferu RAM i GPU glmark2 im wyższy lepszy
+          // dlatego można odpowiednio odwrócić/normalizować, ale na początek bierzemy surowe wartości jako liczby
+          return parseNumber(rec.wartosc);
+        });
 
-    let filesProcessed = 0;
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
-          const csvText = e.target.result;
-          const data = parseCSV(csvText);
-          allData.push(...data);
-          renderTable(data, outputs, `Dane z pliku: ${file.name}`);
-          renderJSON(data, outputs, `JSON z pliku: ${file.name}`);
-        } catch (err) {
-          outputs.innerHTML += `<p style="color:red;">Błąd parsowania pliku ${file.name}: ${err.message}</p>`;
+        return {
+          label: labels[idx],
+          data: d,
+          backgroundColor: COLORS[idx % COLORS.length],
+          borderColor: BORDER_COLORS[idx % BORDER_COLORS.length],
+          borderWidth: 2,
+          fill: true,
+          spanGaps: true,
+          // jeśli brak wartości, wykres pomija punkt
+          pointRadius: d.map(v => isNaN(v) ? 0 : 3)
+        };
+      });
+
+      // Przedstawienie na wykresie wymaga normalizacji - tutaj dla prostoty pomińmy (można dodać później)
+
+      // Dodaj etykiety testów, zastępując podkreślenia spacjami
+      const radarLabels = testsToInclude.map(t => t.replace(/_/g,' '));
+
+      if(radarChart){
+        radarChart.destroy();
+      }
+
+      radarChart = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: radarLabels,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            title: {
+              display: true,
+              text: 'Porównanie benchmarków - wykres radarowy'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  let val = context.raw;
+                  if(isNaN(val)) return 'Brak danych';
+                  return val;
+                }
+              }
+            }
+          },
+          scales: {
+            r: {
+              angleLines: { display: true },
+              suggestedMin: 0,
+              // nie ustawiamy suggestedMax – zależy od danych
+              beginAtZero: true,
+              ticks: { stepSize: 1 },
+              pointLabels: { font: { size: 14 } }
+            }
+          }
         }
-        filesProcessed++;
-        if(filesProcessed === files.length) {
-          // Po załadowaniu wszystkich plików pokaż porównanie
-          renderComparison(allData, outputs);
-        }
-      };
-      reader.readAsText(file);
-    });
-  });
+      });
+    }
   </script>
 </body>
 </html>
