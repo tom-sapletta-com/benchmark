@@ -80,8 +80,9 @@ save_result "CPU_total_time" "$cpu_time" "s"
 echo -e "\n=== Benchmark RAM ==="
 ram_output=$(sysbench memory run)
 echo "$ram_output"
-ram_speed=$(echo "$ram_output" | grep "transferred" -A1 | tail -n1 | awk '{print $3}')
-ram_unit=$(echo "$ram_output" | grep "transferred" -A1 | tail -n1 | awk '{print $4}')
+# Nowa, poprawiona metoda wydobycia transferu RAM
+ram_speed=$(echo "$ram_output" | grep "transferred (" | awk -F '[()]' '{print $2}' | awk '{print $1}')
+ram_unit=$(echo "$ram_output" | grep "transferred (" | awk -F '[()]' '{print $2}' | awk '{print $2}')
 save_result "RAM_transfer_rate" "$ram_speed" "$ram_unit"
 
 ## Benchmark dysku ##
@@ -97,9 +98,12 @@ echo -e "\n=== Benchmark GPU (glmark2, skrócony test) ==="
 echo "Uruchamiam glmark2 z limitowanym czasem 4 minuty i wybranymi testami..."
 glmark2_output=$(timeout 240 glmark2 --size 400x300 -s build,texture,shading,bump 2>&1 | tee glmark2.log)
 
-# Odporne wyciąganie wyniku
-glmark2_score=$(echo "$glmark2_output" | awk '/[Gg]lmark2 [Ss]core/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+(\.[0-9]+)?$/) {print $i; exit}}')
-
+# Odporne wyciąganie wyniku GPU (różne formaty, małe/duże litery)
+glmark2_score=$(echo "$glmark2_output" | grep -Ei "glmark2.*score" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+if [ -z "$glmark2_score" ]; then
+  # Spróbuj znaleźć wynik w pliku log (jeśli wyjście mogło nie zawierać score przez timeout)
+  glmark2_score=$(grep -Ei "glmark2.*score" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+fi
 if [ -n "$glmark2_score" ]; then
   save_result "GPU_glmark2_score" "$glmark2_score" "pkt"
 else
