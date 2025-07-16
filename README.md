@@ -1,6 +1,5 @@
 # Benchmark Linux - uniwersalny skrypt testujący CPU, RAM, dysk i GPU
 
-
 Ten projekt to prosty, uniwersalny skrypt bash do przeprowadzenia podstawowych testów wydajnościowych na systemach Linux: Fedora, Ubuntu, Debian, Arch Linux i innych.
 
 Skrypt automatycznie wykrywa używany system i menadżera pakietów, instaluje potrzebne narzędzia (`sysbench`, `glmark2`), zbiera szczegółowe informacje o sprzęcie i systemie oraz wykonuje benchmarki:
@@ -10,13 +9,16 @@ Skrypt automatycznie wykrywa używany system i menadżera pakietów, instaluje p
 - Dysk (zapis 1 GB)
 - GPU (test OpenGL glmark2 w skróconej wersji, by benchmark zmieścił się poniżej 5 minut)
 
-Wyniki zapisywane są do pliku CSV, co ułatwia ich archiwizację i porównywanie.
+Wyniki zapisywane są do pliku CSV, co ułatwia ich archiwizację i porównywanie. Dodatkowo, narzędzie oferuje wizualizację wyników w formie wykresu radarowego oraz możliwość porównania wyników z różnych systemów.
 
 
 
 ## Zawartość projektu
 
-- `benchmark-linux.sh` - główny skrypt bash do uruchomienia testów  
+- `benchmark.sh` - główny skrypt bash do uruchomienia testów
+- `install.sh` - skrypt instalacyjny (one-liner)
+- `index.html` - wizualizacja wyników w formie wykresu radarowego z lokalnym przechowywaniem historii
+- `publish.sh` - skrypt do publikowania wyników na serwerze
 - `README.md` - niniejsza dokumentacja
 
 ---
@@ -29,24 +31,62 @@ Wyniki zapisywane są do pliku CSV, co ułatwia ich archiwizację i porównywani
 
 ---
 
+## Szybka instalacja (one-liner)
+
+Możesz zainstalować i uruchomić benchmark za pomocą jednej komendy:
+
+```bash
+curl -s https://raw.githubusercontent.com/tom-sapletta-com/benchmark/main/install.sh | bash
+```
+
+Lub pobierz i uruchom ręcznie:
+
+```bash
+wget https://raw.githubusercontent.com/tom-sapletta-com/benchmark/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
 ## Sposób użycia
 
-1. Pobierz lub skopiuj plik `benchmark-linux.sh` na testowaną maszynę.  
-2. Nadaj mu prawa wykonania:
+1. Pobierz repozytorium lub użyj skryptu instalacyjnego jak opisano powyżej.
+2. Uruchom skrypt benchmark:
 
-   ```
-   chmod +x benchmark-linux.sh
-   ```
-
-3. Uruchom skrypt:
-
-   ```
-   ./benchmark-linux.sh
+   ```bash
+   ./benchmark.sh
    ```
 
-4. Skrypt wyświetli informacje o systemie i sprzęcie, zainstaluje pakiety (jeśli brak) i przeprowadzi testy.  
-5. Wyniki testów zostaną zapisane do pliku o nazwie w stylu `benchmark_results_YYYYMMDD_HHMMSS.csv` w bieżącym katalogu.  
-6. Log szczegółowy GPU znajduje się w pliku `glmark2.log`.
+3. Skrypt wyświetli informacje o systemie i sprzęcie, zainstaluje pakiety (jeśli brak) i przeprowadzi testy.
+4. Wyniki testów zostaną zapisane do pliku o nazwie w stylu `benchmark_results_YYYYMMDD_HHMMSS.csv` w bieżącym katalogu.
+5. Aby zobaczyć wizualizację wyników, otwórz plik `index.html` w przeglądarce.
+6. Aby opublikować wyniki na serwerze, użyj skryptu `publish.sh`:
+
+   ```bash
+   ./publish.sh
+   ```
+
+---
+
+## Nowe funkcje
+
+### Wizualizacja wyników
+
+Plik `index.html` oferuje:
+- Wykres radarowy do porównania wyników
+- Lokalne przechowywanie historii benchmarków (PWA Storage API)
+- Tabelę porównawczą wyników
+- Informacje o testowanych urządzeniach
+
+### Publikowanie wyników
+
+Możesz publikować swoje wyniki na serwerze benchmark.sapletta.com za pomocą skryptu `publish.sh`. Skrypt automatycznie wysyła ostatni wygenerowany plik CSV na serwer, gdzie możesz porównać swoje wyniki z innymi użytkownikami.
+
+### Porównywanie wyników online
+
+Strona benchmark.sapletta.com umożliwia porównanie wyników z różnych systemów. Możesz:
+- Przeglądać wyniki innych użytkowników
+- Porównywać różne konfiguracje sprzętowe
+- Analizować trendy wydajnościowe
 
 ---
 
