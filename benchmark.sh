@@ -32,7 +32,6 @@ echo "Dyski: $DISKS"
 echo
 echo "--- Rozpoczynam benchmark ---"
 
-# Funkcja instalacji pakietów zależnie od systemu
 install_packages() {
   PACKAGES="$1"
   if command -v dnf &>/dev/null; then
@@ -62,30 +61,25 @@ if ! command -v sysbench &>/dev/null || ! command -v glmark2 &>/dev/null; then
 fi
 
 echo "Przygotowuję plik wyników: $RESULTS_FILE"
-echo "test,wartosc,jednostka,system,cpu_model,kernel,gpu,ram_total,disks,data" > $RESULTS_FILE
+echo "test,wartosc,jednostka,system,cpu_model,kernel,gpu,ram_total,disks,data" > "$RESULTS_FILE"
 
-# Funkcja zapisu wyniku do CSV
 save_result() {
   echo "$1,$2,$3,\"$OS_NAME\",\"$CPU_MODEL\",\"$KERNEL\",\"$GPU_INFO\",\"$RAM_TOTAL\",\"$DISKS\",\"$DATE_NOW\"" >> "$RESULTS_FILE"
 }
 
-## Benchmark CPU ##
 echo "=== Benchmark CPU ==="
 cpu_output=$(sysbench cpu --cpu-max-prime=20000 --threads=4 run)
 echo "$cpu_output"
 cpu_time=$(echo "$cpu_output" | grep "total time:" | awk '{print $3}')
 save_result "CPU_total_time" "$cpu_time" "s"
 
-## Benchmark RAM ##
 echo -e "\n=== Benchmark RAM ==="
 ram_output=$(sysbench memory run)
 echo "$ram_output"
-# Nowa, poprawiona metoda wydobycia transferu RAM
-ram_speed=$(echo "$ram_output" | grep "transferred (" | awk -F '[()]' '{print $2}' | awk '{print $1}')
-ram_unit=$(echo "$ram_output" | grep "transferred (" | awk -F '[()]' '{print $2}' | awk '{print $2}')
+ram_speed=$(echo "$ram_output" | grep transferred | sed -n 's/.*(\([0-9.]\+\) \([A-Za-z\/]\+\)).*/\1/p')
+ram_unit=$(echo "$ram_output" | grep transferred | sed -n 's/.*(\([0-9.]\+\) \([A-Za-z\/]\+\)).*/\2/p')
 save_result "RAM_transfer_rate" "$ram_speed" "$ram_unit"
 
-## Benchmark dysku ##
 echo -e "\n=== Benchmark dysku (zapis 1 GB) ==="
 dd_output=$(dd if=/dev/zero of=./testfile bs=1G count=1 oflag=dsync 2>&1)
 echo "$dd_output"
@@ -93,17 +87,17 @@ disk_speed=$(echo "$dd_output" | grep -o '[0-9.]* [MG]B/s' | tail -n1 | awk '{pr
 disk_unit=$(echo "$dd_output" | grep -o '[0-9.]* [MG]B/s' | tail -n1 | awk '{print $2}')
 save_result "Disk_write_speed" "$disk_speed" "$disk_unit"
 
-## Benchmark GPU (skrótowy) ##
 echo -e "\n=== Benchmark GPU (glmark2, skrócony test) ==="
 echo "Uruchamiam glmark2 z limitowanym czasem 4 minuty i wybranymi testami..."
 glmark2_output=$(timeout 240 glmark2 --size 400x300 -s build,texture,shading,bump 2>&1 | tee glmark2.log)
 
-# Odporne wyciąganie wyniku GPU (różne formaty, małe/duże litery)
-glmark2_score=$(echo "$glmark2_output" | grep -Ei "glmark2.*score" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+# próbujemy wydobyć wynik z różnych formatów wyjścia
+glmark2_score=$(echo "$glmark2_output" | grep -E "Score:" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+
 if [ -z "$glmark2_score" ]; then
-  # Spróbuj znaleźć wynik w pliku log (jeśli wyjście mogło nie zawierać score przez timeout)
-  glmark2_score=$(grep -Ei "glmark2.*score" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
+  glmark2_score=$(grep -E "Score:" glmark2.log | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
 fi
+
 if [ -n "$glmark2_score" ]; then
   save_result "GPU_glmark2_score" "$glmark2_score" "pkt"
 else
